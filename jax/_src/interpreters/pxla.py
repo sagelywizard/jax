@@ -1124,7 +1124,7 @@ class ExecuteReplicated:
   __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
                'has_unordered_effects', 'ordered_effects', 'keepalive',
                'has_host_callbacks', '_local_devices', 'kept_var_idx',
-               'mut', '__weakref__']
+               'mut', 'profile_runner', '__weakref__']
 
   def __init__(self, xla_executable, name, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
@@ -1144,6 +1144,7 @@ class ExecuteReplicated:
     self.has_host_callbacks = has_host_callbacks
     self.kept_var_idx = kept_var_idx
     self.mut = mut
+    self.profile_runner = None
 
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
@@ -1184,15 +1185,19 @@ class ExecuteReplicated:
     if (self.ordered_effects or self.has_unordered_effects
         or self.has_host_callbacks):
       input_bufs = self._add_tokens_to_inputs(input_bufs)
-      results = self.xla_executable.execute_sharded(
-          input_bufs, with_tokens=True
-      )
+
+      with profiler.ProfileSessionRunnerWrapper(self.profile_runner):
+        results = self.xla_executable.execute_sharded(
+            input_bufs, with_tokens=True
+        )
+
       result_token_bufs = results.disassemble_prefix_into_single_device_arrays(
           len(self.ordered_effects))
       sharded_runtime_token = results.consume_token()
       self._handle_token_bufs(result_token_bufs, sharded_runtime_token)
     else:
-      results = self.xla_executable.execute_sharded(input_bufs)
+      with profiler.ProfileSessionRunnerWrapper(self.profile_runner):
+        results = self.xla_executable.execute_sharded(input_bufs)
     if dispatch.needs_check_special():
       out_arrays = results.disassemble_into_single_device_arrays()
       for arrays in out_arrays:
